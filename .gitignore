@@ -1,0 +1,48 @@
+# =========================
+# Secrets & Environments
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# Python & FastAPI (Backend)
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual Environments
+venv/
+env/
+.venv/
+.env/
+
+# =========================
+# Node.js & React (Frontend)
+# =========================
+node_modules/
+build/
+dist/
+.npm/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# =========================
+# Scraping Outputs & Data
+# =========================
+# Ignore the generated CSV files so you don't upload giant datasets
+*.csv
+# Ignore local SQLite databases if you ever use them for testing
+*.sqlite3
+*.db
+
+# =========================
+# OS & IDE specific files
+# =========================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
