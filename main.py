@@ -1,5 +1,6 @@
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.responses import FileResponse
+from urllib.parse import urlparse
 import os
 from dotenv import load_dotenv
 import pandas as pd
@@ -16,7 +17,11 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 # 3. Configure your AI with the hidden key
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    # model = genai.GenerativeModel('gemini-2.5-flash')
+    # This is the line Pylance was looking for:
+    model = genai.GenerativeModel('gemini-2.5-flash') 
+else:
+    model = None
+    print("WARNING: Gemini API Key not found in .env!")
 
 app = FastAPI()
 
@@ -26,39 +31,81 @@ scraping_status = {"status": "idle", "products_scraped": 0}
 @app.get("/check-env")
 async def check_env():
     """A quick test to make sure your .env is loading properly."""
-    # Never return the actual password in a real app, this is just for testing!
     if DATABASE_URL:
         return {"message": "Database URL loaded successfully!"}
     return {"error": "Failed to load environment variables."}
 
-async def fetch_shopify_products(store_url: str):
-    """Scrapes the products.json endpoint of a Shopify store."""
-    url = f"{store_url}/products.json?limit=50"
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url)
-        if response.status_code == 200:
-            return response.json().get('products', [])
+async def fetch_shopify_products(pasted_url: str):
+    """Takes ANY url, extracts the base domain, and safely checks for Shopify products."""
+    
+    # 1. The Smart Cleaner: Extract just the base website (e.g., "https://store.com")
+    try:
+        parsed_uri = urlparse(pasted_url)
+        # If the user just typed "store.com" without https://, fix it
+        if not parsed_uri.scheme:
+            pasted_url = "https://" + pasted_url
+            parsed_uri = urlparse(pasted_url)
+            
+        base_url = f"{parsed_uri.scheme}://{parsed_uri.netloc}"
+    except Exception:
+        print("⚠️ Invalid URL format provided.")
         return []
+
+    # 2. Build the correct Shopify link
+    json_url = f"{base_url}/products.json?limit=50"
+    
+    # 3. Disguise the bot as a real web browser
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            print(f"🔍 Attempting to scrape: {json_url}")
+            response = await client.get(json_url, headers=headers, follow_redirects=True)
+            
+            if response.status_code == 200:
+                data = response.json()
+                # Double-check that this is actually a Shopify JSON response
+                if 'products' in data:
+                    print(f"✅ Success! Found {len(data['products'])} products.")
+                    return data['products']
+                else:
+                    print(f"⚠️ {base_url} returned JSON, but it doesn't look like Shopify data.")
+                    return []
+            else:
+                print(f"⚠️ {base_url} returned status {response.status_code}. Might not be a Shopify store.")
+                return []
+                
+        # Catch the exact error you got before, plus any connection errors
+        except ValueError:
+            print(f"❌ Error: {base_url} returned HTML, not JSON. It is likely NOT a Shopify store, or it has bot-protection.")
+            return []
+        except Exception as e:
+            print(f"❌ Connection error with {base_url}: {e}")
+            return []
 
 def enhance_with_ai(product_title: str):
     """Uses AI to categorize the product based on its title."""
     try:
-        # NOTE: Uncomment the AI code once you add your API key
-        # prompt = f"Categorize this product in one word: {product_title}"
-        # response = model.generate_content(prompt)
-        # return response.text.strip()
+        if model:
+            prompt = f"Categorize this product in one word: {product_title}"
+            response = model.generate_content(prompt)
+            return response.text.strip()
         
-        # Mock AI response for testing
-        return "Categorized by AI" 
+        # Mock AI response if model is not configured
+        return "Categorized by AI (Mock)" 
     except Exception as e:
+        print(f"AI Error: {e}")
         return "Unknown"
 
 async def scrape_and_process_task(store_url: str):
     """The background task that does the heavy lifting."""
     global scraping_status
     scraping_status["status"] = "scraping"
+    scraping_status["products_scraped"] = 0
     
-    # 1. Scrape the data
+    # 1. Scrape the data using the improved fetcher
     raw_products = await fetch_shopify_products(store_url)
     
     processed_data = []
@@ -92,7 +139,7 @@ async def start_scraper(store_url: str, background_tasks: BackgroundTasks):
     if scraping_status["status"] == "scraping":
         return {"message": "Scraping is already running!"}
     
-    # Run the heavy scraping task in the background so the API doesn't freeze
+    # Run the heavy scraping task in the background
     background_tasks.add_task(scrape_and_process_task, store_url)
     return {"message": "Scraping started in the background!"}
 
